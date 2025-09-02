@@ -15,3 +15,4 @@ async def get_user_ratings(username: str):
     return {"username": username, "movies": hotness_sorted}
 
 # TODO add more endpoints
+# TODO add logic for if letterboxd username is not found
