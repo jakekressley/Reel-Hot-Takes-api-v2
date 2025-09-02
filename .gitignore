@@ -67,7 +67,6 @@ coverage.xml
 
 # MongoDB dump files (if any)
 *.bson
-*.json
 
 # PyCharm
 .idea/
