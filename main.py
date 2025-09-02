@@ -13,3 +13,5 @@ async def get_user_ratings(username: str):
     movies = await scrape_user(username)
     hotness_sorted = calculate_hotness(movies)
     return {"username": username, "movies": hotness_sorted}
+
+# TODO add more endpoints
