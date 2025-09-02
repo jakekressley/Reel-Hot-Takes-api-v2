@@ -20,6 +20,11 @@ async def get_page_count(username):
     async with aiohttp.ClientSession() as session:
         html = await fetch(session, url)
         soup = BeautifulSoup(html, "lxml")
+        # Check for invalid username
+        not_found = soup.find("body", class_="error")
+        if not_found:
+            print(f"[Warning] Username '{username}' not found on Letterboxd.")
+            return 0
         try:
             page_data = soup.find_all("li", class_="paginate-page")[-1]
             return int(page_data.find("a").text.replace(",", ""))
@@ -151,6 +156,7 @@ async def update_movies_with_tmdb(movies):
 async def scrape_user(username):
     total_pages = await get_page_count(username)
     if total_pages == 0:
+        print(f"[Error] Invalid or non-existent Letterboxd username: {username}")
         return []
     movies = await fetch_letterboxd_pages(username, total_pages)
     movies = await update_movies_with_tmdb(movies)

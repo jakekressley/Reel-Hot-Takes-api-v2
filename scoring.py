@@ -1,6 +1,8 @@
 import math
 
+# TODO: refactor calculation maybe stop using tmdb
 def calculate_hotness(scores):
+    filtered = []
     for movie in scores:
         avg_rating = movie['average']
         user_score = movie['user_rating']
@@ -11,5 +13,6 @@ def calculate_hotness(scores):
         weighted_distance = abs(user_score - weighted_average)
         hotness = weighted_distance * 6 + weighted_votes * 3
         movie['hotness'] = round(hotness, 2)
-    
-    return sorted(scores, key=lambda x: x['hotness'], reverse=True)
+        if movie['hotness'] <= 100:
+            filtered.append(movie)
+    return sorted(filtered, key=lambda x: x['hotness'], reverse=True)
