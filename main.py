@@ -13,8 +13,10 @@ async def get_user_ratings(username: str):
     movies = await scrape_user(username)
     if movies is None or len(movies) == 0:
         return {"error": f"Username '{username}' not found or has no rated movies."}
-    hotness_sorted = calculate_hotness(movies)
-    return {"username": username, "movies": hotness_sorted}
+    #hotness_sorted = calculate_hotness(movies)
+    return {"username": username, "movies": movies}
+#    return {"username": username, "movies": hotness_sorted}
+
 
 # TODO add more endpoints
 # TODO add logic for if letterboxd username is not found
