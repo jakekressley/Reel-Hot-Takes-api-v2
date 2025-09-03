@@ -93,6 +93,7 @@ async def fetch_imdb_data(session, movie_title, imdb_url):
             rating_tag = soup.find("div", class_="ipxRZe")
             print(rating_tag)
             poster = soup.find("div", class_="ipc-media")
+            print(imdb_url, poster)
 
             return average, votes, poster
         except Exception as e:
