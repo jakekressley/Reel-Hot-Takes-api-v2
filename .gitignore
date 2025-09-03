@@ -65,6 +65,8 @@ coverage.xml
 # Logs
 *.log
 
+.csv
+
 # MongoDB dump files (if any)
 *.bson
 
