@@ -74,13 +74,13 @@ async def fetch_letterboxd_pages(username, total_pages):
                         "title": title,
                         "link": movie_link,
                         "user_rating": user_rating,
-
+                        "imdb_id": "",
                     }
                 except Exception as e:
                     print(f"[Warning] Skipping a movie due to parse error: {e} at {title}")
                     continue
             
-    return list(movies_dict.values())
+    return movies_dict
 
 async def fetch_imdb_data(session, movie_title, imdb_url):
     async with session.get(imdb_url) as resp:
@@ -124,32 +124,33 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
     try:
         html = await fetch(session, letterboxd_url)
         soup = BeautifulSoup(html, "lxml")
-
-        production_info = soup.find("div", class_="productioninfo")
-        year = production_info.find("span", class_="releasedate").find("a").text.strip()
-        director_tags = production_info.find("span", class_="creatorlist").find_all("a")
-        # logic for multiple directors
-        directors = [tag.text.strip() for tag in director_tags][:2]
-        director = ", ".join(directors)
-
-        production_synopsis = soup.find("section", class_="production-synopsis")
-        tagline = production_synopsis.find("h4", class_="tagline").text.strip()
-        overview = production_synopsis.find("div", class_="truncate").text.strip()
-        
         imdb_tag = soup.find("p", class_="text-link text-footer")
-        imdb_url = imdb_tag.find("a", attrs={"data-track-action": "IMDb"})["href"]
-        imdb_url = imdb_url.rsplit('/', 1)[0]
-        
+        imdb_link = imdb_tag.find("a", attrs={"data-track-action": "IMDb"})["href"]
+        imdb_id = imdb_link.rstrip('/').split('/')[-2]
 
-        average, votes, poster = await fetch_imdb_data(session, movie_title, imdb_url)
-        #print(poster)
-        genres = [],
+        imdb_api_url = f"https://api.imdbapi.dev/titles/{imdb_id}"
+        async with session.get(imdb_api_url) as resp:
+            if resp.status == 200:
+                imdb_data = await resp.json(content_type=None)
+            else:
+                text = await resp.text()
+                print(f"IMDB API error: status={resp.status}, body={text}")
+                return {}
+            
+        year = imdb_data.get("startYear")
+        directors_list = [d.get("displayName", "") for d in imdb_data.get("directors", [])]
+        director = ", ".join(directors_list)
+        overview = imdb_data.get("plot", "plot now found")
+        average = imdb_data.get("rating").get("aggregateRating")
+        votes = imdb_data.get("rating").get("voteCount")
+        poster = imdb_data.get("primaryImage", {}).get("url")
+        genres = imdb_data.get("genres", [])
 
+        # print(f"title: {movie_title}\nyear: {year}\ndirector: {director}\noverview: {overview}\naverage: {average}\nvotes: {votes}\nposter: {poster}\ngenres: {genres}\n")
 
         movie_data = {
             "year": year,
             "director": director,
-            "tagline" : tagline,
             "overview": overview,
             "poster": poster,
             "genres": genres,
@@ -157,13 +158,11 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
             "votes": votes,
         }
 
-        """
         await collection.update_one(
             {"title": movie_title},
             {"$set": {**movie_data, "title": movie_title}},
             upsert=True
         )
-        """
 
         return movie_data
 
@@ -171,7 +170,7 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
         print(f"[Warning] Letterboxd scrape failed for {movie_title}: {e}")
         return {}
 
-async def update_movies_with_letterboxd(movies):
+async def update_movies_with_letterboxd(movies, movies_dict):
     async with aiohttp.ClientSession() as session:
         tasks = [fetch_letterboxd_data(session, m['title'], m['link']) for m in movies]
         results = await asyncio.gather(*tasks)
@@ -192,6 +191,7 @@ async def scrape_user(username):
     if total_pages == 0:
         print(f"[Error] Invalid or non-existent Letterboxd username: {username}")
         return []
-    movies = await fetch_letterboxd_pages(username, total_pages)
-    movies = await update_movies_with_letterboxd(movies)
+    movies_dict = await fetch_letterboxd_pages(username, total_pages)
+    movies = list(movies_dict.values())
+    movies = await update_movies_with_letterboxd(movies, movies_dict)
     return movies
