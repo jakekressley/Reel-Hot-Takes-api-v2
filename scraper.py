@@ -110,17 +110,24 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
     existing = await collection.find_one({"title": movie_title})
     if existing:
         return {
-            "tagline" : existing.get("tagline", ""),
-            "director": existing.get("director", ""),
+            "imdb_id": imdb_id,
+            "type": existing.get("type", ""),
+            "title": existing.get("primaryTitle", ""),
+            "poster": existing.get("primaryImage", {}).get("url"),
+            "year": existing.get("startYear"),
+            "runtimeSeconds": existing.get("runtimeSeconds"),
             "genres": existing.get("genres", []),
-            "overview": existing.get("overview", ""),
-            "poster": existing.get("poster", ""),
-            "year": existing.get("year", ""),
-            "average": existing.get("average"),
-            "votes": existing.get("votes"),
+            "average": existing.get("rating", {}).get("aggregateRating"),
+            "votes": existing.get("rating", {}).get("voteCount"),
+            "directors": existing.get("directors", []),
+            "writers": existing.get("writers", []),
+            "stars": existing.get("stars", []),
+            "originCountries": existing.get("originCountries", []),
+            "spokenLanguages": existing.get("spokenLanguages", []),
+            "interests": existing.get("interests", []),
         }
 
-    # 2. Scrape from Letterboxd
+    # 2. Get from IMDB API
     try:
         html = await fetch(session, letterboxd_url)
         soup = BeautifulSoup(html, "lxml")
@@ -131,31 +138,30 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
         imdb_api_url = f"https://api.imdbapi.dev/titles/{imdb_id}"
         async with session.get(imdb_api_url) as resp:
             if resp.status == 200:
-                imdb_data = await resp.json(content_type=None)
+                data = await resp.json(content_type=None)
             else:
                 text = await resp.text()
                 print(f"IMDB API error: status={resp.status}, body={text}")
                 return {}
-            
-        year = imdb_data.get("startYear")
-        directors_list = [d.get("displayName", "") for d in imdb_data.get("directors", [])]
-        director = ", ".join(directors_list)
-        overview = imdb_data.get("plot", "plot now found")
-        average = imdb_data.get("rating").get("aggregateRating")
-        votes = imdb_data.get("rating").get("voteCount")
-        poster = imdb_data.get("primaryImage", {}).get("url")
-        genres = imdb_data.get("genres", [])
 
         # print(f"title: {movie_title}\nyear: {year}\ndirector: {director}\noverview: {overview}\naverage: {average}\nvotes: {votes}\nposter: {poster}\ngenres: {genres}\n")
 
         movie_data = {
-            "year": year,
-            "director": director,
-            "overview": overview,
-            "poster": poster,
-            "genres": genres,
-            "average": average,
-            "votes": votes,
+            "imdb_id": imdb_id,
+            "type": data.get("type", ""),
+            "title": data.get("primaryTitle", ""),
+            "poster": data.get("primaryImage", {}).get("url"),
+            "year": data.get("startYear"),
+            "runtimeSeconds": data.get("runtimeSeconds"),
+            "genres": data.get("genres", []),
+            "average": data.get("rating", {}).get("aggregateRating"),
+            "votes": data.get("rating", {}).get("voteCount"),
+            "directors": data.get("directors", []),
+            "writers": data.get("writers", []),
+            "stars": data.get("stars", []),
+            "originCountries": data.get("originCountries", []),
+            "spokenLanguages": data.get("spokenLanguages", []),
+            "interests": data.get("interests", []),
         }
 
         await collection.update_one(
@@ -163,6 +169,8 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
             {"$set": {**movie_data, "title": movie_title}},
             upsert=True
         )
+
+        await asyncio.sleep(0.5)
 
         return movie_data
 
@@ -176,13 +184,22 @@ async def update_movies_with_letterboxd(movies, movies_dict):
         results = await asyncio.gather(*tasks)
 
         for movie, lb_data in zip(movies, results):
+            movie["imdb_id"] = lb_data.get("imdb_id", "")
+            movie["type"] = lb_data.get("type", "")
+            movie["title"] = lb_data.get("title", "")
+            movie["poster"] = lb_data.get("poster", "")
+            movie["year"] = lb_data.get("year", "")
+            movie["runtimeSeconds"] = lb_data.get("runtimeSeconds", None)
+            movie["genres"] = lb_data.get("genres", [])
             movie["average"] = lb_data.get("average", 0)
             movie["votes"] = lb_data.get("votes", 0)
-            movie["genres"] = lb_data.get("genres", [])
+            movie["directors"] = lb_data.get("directors", [])
+            movie["writers"] = lb_data.get("writers", [])
+            movie["stars"] = lb_data.get("stars", [])
+            movie["originCountries"] = lb_data.get("originCountries", [])
+            movie["spokenLanguages"] = lb_data.get("spokenLanguages", [])
+            movie["interests"] = lb_data.get("interests", [])
             movie["overview"] = lb_data.get("overview", "")
-            movie["poster"] = lb_data.get("poster", "")
-            movie["director"] = lb_data.get("director", "")
-            movie["year"] = lb_data.get("year", "")
 
     return movies
 
