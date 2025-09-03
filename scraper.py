@@ -1,5 +1,7 @@
 import asyncio
 import aiohttp
+from lxml import etree
+from lxml.cssselect import CSSSelector
 from bs4 import BeautifulSoup
 from db import collection
 import os
@@ -63,6 +65,8 @@ async def fetch_letterboxd_pages(username, total_pages):
                         continue
 
                     movie_link = "https://letterboxd.com" + parent_div["data-item-link"]
+                    #poster_link = movie.find("div", class_="film-poster").find("img", class_="image")['src']
+                    #print(poster_link)
 
                     if user_rating == 0 or title in movies_dict:
                         continue
@@ -70,94 +74,124 @@ async def fetch_letterboxd_pages(username, total_pages):
                         "title": title,
                         "link": movie_link,
                         "user_rating": user_rating,
-                        "average": 0,
-                        "votes": 0,
-                        "genres": [],
-                        "overview": "",
-                        "poster": "",
-                        "year": ""
+                        "imdb_id": "",
                     }
                 except Exception as e:
                     print(f"[Warning] Skipping a movie due to parse error: {e} at {title}")
                     continue
             
-    return list(movies_dict.values())
+    return movies_dict
 
-"""
-Gets the corresponding movie data from TMDB for things like vote count and a more accurate average
-"""
-async def fetch_tmdb_data(session, movie_title, letterboxd_url):
-    # Try Mongo before scraping
-    existing = await collection.find_one({"Title": movie_title})
-    #print(existing)
+async def fetch_imdb_data(session, movie_title, imdb_url):
+    async with session.get(imdb_url) as resp:
+        try:
+            html = await resp.text()
+            soup = BeautifulSoup(html, "lxml")
+
+            average = 0
+            votes = 0
+            rating_tag = soup.find("div", class_="ipxRZe")
+            print(rating_tag)
+            poster = soup.find("div", class_="ipc-media")
+            print(imdb_url, poster)
+
+            return average, votes, poster
+        except Exception as e:
+            print(f"[Warning] IMDB scrape failed for {movie_title}: {e}")
+            return None
+
+
+async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
+    """
+    Scrape a film page on Letterboxd for average, votes, genres, overview, poster, director, year.
+    Falls back to Mongo cache if available.
+    """
+    # 1. Check Mongo first
+    existing = await collection.find_one({"title": movie_title})
     if existing:
         return {
-            "Average Score": existing.get("Average Score", 5),
-            "Vote Count": existing.get("Vote Count", 1000),
-            "Genres": existing.get("Genres", []),
-            "Overview": existing.get("Overview", ""),
-            "Poster": existing.get("Poster", ""),
-            "Year": existing.get("Year", "")
+            "tagline" : existing.get("tagline", ""),
+            "director": existing.get("director", ""),
+            "genres": existing.get("genres", []),
+            "overview": existing.get("overview", ""),
+            "poster": existing.get("poster", ""),
+            "year": existing.get("year", ""),
+            "average": existing.get("average"),
+            "votes": existing.get("votes"),
         }
 
-    # if not in mongo get tmdb link via scraping letterboxd
+    # 2. Scrape from Letterboxd
     try:
-        #print("LETTERBOXD_URL", letterboxd_url)
         html = await fetch(session, letterboxd_url)
         soup = BeautifulSoup(html, "lxml")
-        tmdb_tag = soup.find("p", class_="text-link text-footer")
-        tmdb_link = tmdb_tag.find("a", attrs={"data-track-action": "TMDB"})["href"]
-        #print(tmdb_link)
+        imdb_tag = soup.find("p", class_="text-link text-footer")
+        imdb_link = imdb_tag.find("a", attrs={"data-track-action": "IMDb"})["href"]
+        imdb_id = imdb_link.rstrip('/').split('/')[-2]
 
-        if not tmdb_link:
-            return {}
+        imdb_api_url = f"https://api.imdbapi.dev/titles/{imdb_id}"
+        async with session.get(imdb_api_url) as resp:
+            if resp.status == 200:
+                imdb_data = await resp.json(content_type=None)
+            else:
+                text = await resp.text()
+                print(f"IMDB API error: status={resp.status}, body={text}")
+                return {}
+            
+        year = imdb_data.get("startYear")
+        directors_list = [d.get("displayName", "") for d in imdb_data.get("directors", [])]
+        director = ", ".join(directors_list)
+        overview = imdb_data.get("plot", "plot now found")
+        average = imdb_data.get("rating").get("aggregateRating")
+        votes = imdb_data.get("rating").get("voteCount")
+        poster = imdb_data.get("primaryImage", {}).get("url")
+        genres = imdb_data.get("genres", [])
 
-        tmdb_id = tmdb_link.split('/')[4]
-        #print(tmdb_id)
-        api_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={TMDB_API_KEY}"
-        async with session.get(api_url) as resp:
-            data = await resp.json()
-            movie_data = {
-                "tmdb_id": tmdb_id,
-                "Average Score": data.get("vote_average", 0),
-                "Genres": [g["name"] for g in data.get("genres", [])],
-                "Overview": data.get("overview", ""),
-                "Poster": data.get("poster_path", ""),
-                "Vote Count": data.get("vote_count", 0),
-                "Year": data.get("release_date", "")[:4]
-            }
-            #print(movie_data)
-            # Store in Mongo for caching faster use next time
-            collection.update_one(
-                {"Title": data.get("title", movie_title)},
-                {"$set": {**movie_data, "tmdb_id": data.get("id", tmdb_id), "Title": data.get("title", movie_title)}},
-                upsert=True
-            )
-            return movie_data
+        # print(f"title: {movie_title}\nyear: {year}\ndirector: {director}\noverview: {overview}\naverage: {average}\nvotes: {votes}\nposter: {poster}\ngenres: {genres}\n")
+
+        movie_data = {
+            "year": year,
+            "director": director,
+            "overview": overview,
+            "poster": poster,
+            "genres": genres,
+            "average": average,
+            "votes": votes,
+        }
+
+        await collection.update_one(
+            {"title": movie_title},
+            {"$set": {**movie_data, "title": movie_title}},
+            upsert=True
+        )
+
+        return movie_data
+
     except Exception as e:
-        print(f"[Warning] TMDB fetch failed for {movie_title}: {e}")
+        print(f"[Warning] Letterboxd scrape failed for {movie_title}: {e}")
         return {}
 
-
-async def update_movies_with_tmdb(movies):
+async def update_movies_with_letterboxd(movies, movies_dict):
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_tmdb_data(session, m['title'], m['link']) for m in movies]
+        tasks = [fetch_letterboxd_data(session, m['title'], m['link']) for m in movies]
         results = await asyncio.gather(*tasks)
-        for movie, tmdb_data in zip(movies, results):
-            movie["average"] = tmdb_data.get("Average Score", 0)
-            movie["votes"] = tmdb_data.get("Vote Count", 0)
-            movie["genres"] = tmdb_data.get("Genres", [])
-            movie["overview"] = tmdb_data.get("Overview", "")
-            movie["poster"] = tmdb_data.get("Poster", "")
-            movie["year"] = tmdb_data.get("Year", "")
-    return movies
 
+        for movie, lb_data in zip(movies, results):
+            movie["average"] = lb_data.get("average", 0)
+            movie["votes"] = lb_data.get("votes", 0)
+            movie["genres"] = lb_data.get("genres", [])
+            movie["overview"] = lb_data.get("overview", "")
+            movie["poster"] = lb_data.get("poster", "")
+            movie["director"] = lb_data.get("director", "")
+            movie["year"] = lb_data.get("year", "")
+
+    return movies
 
 async def scrape_user(username):
     total_pages = await get_page_count(username)
     if total_pages == 0:
         print(f"[Error] Invalid or non-existent Letterboxd username: {username}")
         return []
-    movies = await fetch_letterboxd_pages(username, total_pages)
-    movies = await update_movies_with_tmdb(movies)
+    movies_dict = await fetch_letterboxd_pages(username, total_pages)
+    movies = list(movies_dict.values())
+    movies = await update_movies_with_letterboxd(movies, movies_dict)
     return movies
