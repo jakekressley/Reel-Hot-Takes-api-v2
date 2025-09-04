@@ -7,7 +7,7 @@ app = FastAPI(title="Reel Hot Takes API")
 
 origins = [
     "http://localhost:5173",
-    "http://127.0.0.1:5173/",
+    "http://127.0.0.1:5173",
     "http://127.0.0.1:8000",
     "https://reelhottakes.xyz",
 ]
