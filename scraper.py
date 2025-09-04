@@ -1,7 +1,5 @@
 import asyncio
 import aiohttp
-from lxml import etree
-from lxml.cssselect import CSSSelector
 from bs4 import BeautifulSoup
 from db import collection
 import os
@@ -91,9 +89,9 @@ async def fetch_imdb_data(session, movie_title, imdb_url):
             average = 0
             votes = 0
             rating_tag = soup.find("div", class_="ipxRZe")
-            print(rating_tag)
+            # print(rating_tag)
             poster = soup.find("div", class_="ipc-media")
-            print(imdb_url, poster)
+            # print(imdb_url, poster)
 
             return average, votes, poster
         except Exception as e:
@@ -103,22 +101,21 @@ async def fetch_imdb_data(session, movie_title, imdb_url):
 
 async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
     """
-    Scrape a film page on Letterboxd for average, votes, genres, overview, poster, director, year.
-    Falls back to Mongo cache if available.
+    Get a films data (title, year, etc) via database, if not in database then add to it
     """
-    # 1. Check Mongo first
+    # check if in mongo database
     existing = await collection.find_one({"title": movie_title})
     if existing:
         return {
-            "imdb_id": imdb_id,
+            "imdb_id": existing.get("imdb_id", ""),
             "type": existing.get("type", ""),
-            "title": existing.get("primaryTitle", ""),
-            "poster": existing.get("primaryImage", {}).get("url"),
-            "year": existing.get("startYear"),
+            "title": existing.get("title", ""),
+            "poster": existing.get("poster", {}),
+            "year": existing.get("year"),
             "runtimeSeconds": existing.get("runtimeSeconds"),
             "genres": existing.get("genres", []),
-            "average": existing.get("rating", {}).get("aggregateRating"),
-            "votes": existing.get("rating", {}).get("voteCount"),
+            "average": existing.get("average", 0),
+            "votes": existing.get("votes", 0),
             "directors": existing.get("directors", []),
             "writers": existing.get("writers", []),
             "stars": existing.get("stars", []),
@@ -127,56 +124,57 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
             "interests": existing.get("interests", []),
         }
 
-    # 2. Get from IMDB API
-    try:
-        html = await fetch(session, letterboxd_url)
-        soup = BeautifulSoup(html, "lxml")
-        imdb_tag = soup.find("p", class_="text-link text-footer")
-        imdb_link = imdb_tag.find("a", attrs={"data-track-action": "IMDb"})["href"]
-        imdb_id = imdb_link.rstrip('/').split('/')[-2]
+    # Get from IMDB API if not in database
+    else:
+        try:
+            html = await fetch(session, letterboxd_url)
+            soup = BeautifulSoup(html, "lxml")
+            imdb_tag = soup.find("p", class_="text-link text-footer")
+            imdb_link = imdb_tag.find("a", attrs={"data-track-action": "IMDb"})["href"]
+            imdb_id = imdb_link.rstrip('/').split('/')[-2]
 
-        imdb_api_url = f"https://api.imdbapi.dev/titles/{imdb_id}"
-        async with session.get(imdb_api_url) as resp:
-            if resp.status == 200:
-                data = await resp.json(content_type=None)
-            else:
-                text = await resp.text()
-                print(f"IMDB API error: status={resp.status}, body={text}")
-                return {}
+            imdb_api_url = f"https://api.imdbapi.dev/titles/{imdb_id}"
+            async with session.get(imdb_api_url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                else:
+                    text = await resp.text()
+                    print(f"IMDB API error: status={resp.status}, body={text}")
+                    return {}
 
-        # print(f"title: {movie_title}\nyear: {year}\ndirector: {director}\noverview: {overview}\naverage: {average}\nvotes: {votes}\nposter: {poster}\ngenres: {genres}\n")
+            # print(f"title: {movie_title}\nyear: {year}\ndirector: {director}\noverview: {overview}\naverage: {average}\nvotes: {votes}\nposter: {poster}\ngenres: {genres}\n")
 
-        movie_data = {
-            "imdb_id": imdb_id,
-            "type": data.get("type", ""),
-            "title": data.get("primaryTitle", ""),
-            "poster": data.get("primaryImage", {}).get("url"),
-            "year": data.get("startYear"),
-            "runtimeSeconds": data.get("runtimeSeconds"),
-            "genres": data.get("genres", []),
-            "average": data.get("rating", {}).get("aggregateRating"),
-            "votes": data.get("rating", {}).get("voteCount"),
-            "directors": data.get("directors", []),
-            "writers": data.get("writers", []),
-            "stars": data.get("stars", []),
-            "originCountries": data.get("originCountries", []),
-            "spokenLanguages": data.get("spokenLanguages", []),
-            "interests": data.get("interests", []),
-        }
+            movie_data = {
+                "imdb_id": imdb_id,
+                "type": data.get("type", ""),
+                "title": data.get("primaryTitle", ""),
+                "poster": data.get("primaryImage", {}).get("url"),
+                "year": data.get("startYear"),
+                "runtimeSeconds": data.get("runtimeSeconds"),
+                "genres": data.get("genres", []),
+                "average": data.get("rating", {}).get("aggregateRating"),
+                "votes": data.get("rating", {}).get("voteCount"),
+                "directors": data.get("directors", []),
+                "writers": data.get("writers", []),
+                "stars": data.get("stars", []),
+                "originCountries": data.get("originCountries", []),
+                "spokenLanguages": data.get("spokenLanguages", []),
+                "interests": data.get("interests", []),
+            }
 
-        await collection.update_one(
-            {"title": movie_title},
-            {"$set": {**movie_data, "title": movie_title}},
-            upsert=True
-        )
+            await collection.update_one(
+                {"title": movie_title},
+                {"$set": {**movie_data, "title": movie_title}},
+                upsert=True
+            )
 
-        await asyncio.sleep(0.5)
+            await asyncio.sleep(0.15)
 
-        return movie_data
+            return movie_data
 
-    except Exception as e:
-        print(f"[Warning] Letterboxd scrape failed for {movie_title}: {e}")
-        return {}
+        except Exception as e:
+            print(f"[Warning] Letterboxd scrape failed for {movie_title}: {e}")
+            return {}
 
 async def update_movies_with_letterboxd(movies, movies_dict):
     async with aiohttp.ClientSession() as session:
@@ -191,8 +189,8 @@ async def update_movies_with_letterboxd(movies, movies_dict):
             movie["year"] = lb_data.get("year", "")
             movie["runtimeSeconds"] = lb_data.get("runtimeSeconds", None)
             movie["genres"] = lb_data.get("genres", [])
-            movie["average"] = lb_data.get("average", 0)
-            movie["votes"] = lb_data.get("votes", 0)
+            movie["average"] = lb_data.get("average", {})
+            movie["votes"] = lb_data.get("votes", {})
             movie["directors"] = lb_data.get("directors", [])
             movie["writers"] = lb_data.get("writers", [])
             movie["stars"] = lb_data.get("stars", [])

@@ -1,9 +1,12 @@
 import asyncio
 import aiohttp
 import csv
-from db import collection  # make sure db.py is accessible here
+from db import collection
 
 API_URL = "https://api.imdbapi.dev/titles/{}"
+
+errorCount = 0
+erroredMovies = set()
 
 async def fetch_imdb_movie(session, imdb_id):
     existing = await collection.find_one({"imdb_id": imdb_id})
@@ -14,28 +17,32 @@ async def fetch_imdb_movie(session, imdb_id):
     async with session.get(API_URL.format(imdb_id)) as resp:
         if resp.status != 200:
             print(f"[Error] {imdb_id} failed with status {resp.status}")
-            return None
+            return "ERROR"
         data = await resp.json()
-        return data  # Use the full JSON object
+        return data
 
 async def preload_movies_from_csv(csv_file):
     imdb_ids = []
+    errored_ids = []
 
     # 1. Read CSV and pull imdbId column
     with open(csv_file, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
-        next(reader)  # skip header if present
+        next(reader)  
         for row in reader:
-            if len(row) >= 2 and row[1].strip():  # ensure imdbId exists
-                imdb_ids.append("tt" + row[1].strip().zfill(7))  # pad with zeros if needed
+            if len(row) >= 2 and row[1].strip(): 
+                # 0 padding if necessary
+                imdb_ids.append("tt" + row[1].strip().zfill(7)) 
 
     print(f"Found {len(imdb_ids)} IMDb IDs in {csv_file}")
 
-    # 2. Process sequentially with .1 second delay
+    # Load into Database
     async with aiohttp.ClientSession() as session:
         for imdb_id in imdb_ids:
             data = await fetch_imdb_movie(session, imdb_id)
-            if data:
+            if data == "ERROR":
+                errored_ids.append(imdb_id)
+            elif data:
                 movie_doc = {
                     "imdb_id": imdb_id,
                     "type": data.get("type", ""),
@@ -60,10 +67,19 @@ async def preload_movies_from_csv(csv_file):
                 )
                 print(f"[Inserting] {movie_doc['title']} ({imdb_id})")
 
-            # Sleep 1 second before the next request
-            await asyncio.sleep(0.05)
+            # Sleep .3 second before the next request to avoid the 429
+            await asyncio.sleep(0.3)
 
-# Allow running as standalone script
+    print(f"Total errored: {len(errored_ids)}")
+    print(f"Errored IMDb IDs: {errored_ids}")
+
+    with open("errored_ids.txt", "w") as f:
+        for imdb_id in errored_ids:
+            f.write(imdb_id + "\n")
+        print(f"Saved {len(errored_ids)} errored IDs to errored_ids.txt")
+
+    return errored_ids
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
