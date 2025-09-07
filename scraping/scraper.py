@@ -1,8 +1,9 @@
 import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
-from db import collection
+from core.db import collection, user_ratings_collection
 import os
+from datetime import datetime, timezone
 
 BASE_URL = "https://letterboxd.com/{}/films/page/{}/"
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
@@ -46,38 +47,49 @@ async def fetch_letterboxd_pages(username, total_pages):
         for html in pages:
             soup = BeautifulSoup(html, "lxml")
             results = soup.find(class_="grid")
-            
             if not results:
                 continue
+
             for movie in results.find_all("li", class_="griditem"):
                 try:
-                    title = movie.find("img")['alt']
-                    try:
-                        rating_class = movie.find("span", class_="rating")['class'][-1]
-                        user_rating = int(rating_class.split("-")[-1])
-                    except Exception as e:
-                        continue
+                    title = movie.find("img")["alt"]
+
+                    # Default to 0 (unrated)
+                    user_rating = 0
+                    rating_span = movie.find("span", class_="rating")
+                    rating_class = None
+                    if rating_span is not None:
+                        classes = rating_span.get("class", [])
+                        rating_class = classes[-1] if classes else None
+
+                    if rating_class is not None:
+                        try:
+                            user_rating = int(rating_class.split("-")[-1])
+                        except Exception:
+                            # If parsing fails, keep as 0
+                            user_rating = 0
+
                     parent_div = movie.find("div", class_="react-component")
                     if not parent_div:
                         print("[Warning] Skipping due to missing parent div")
                         continue
 
                     movie_link = "https://letterboxd.com" + parent_div["data-item-link"]
-                    #poster_link = movie.find("div", class_="film-poster").find("img", class_="image")['src']
-                    #print(poster_link)
 
-                    if user_rating == 0 or title in movies_dict:
+                    if title in movies_dict:
                         continue
+
                     movies_dict[title] = {
                         "title": title,
                         "link": movie_link,
                         "user_rating": user_rating,
                         "imdb_id": "",
                     }
+
                 except Exception as e:
-                    print(f"[Warning] Skipping a movie due to parse error: {e} at {title}")
+                    print(f"[Warning] Skipping a movie due to parse error: {e} at {title if 'title' in locals() else 'unknown'}")
                     continue
-            
+
     return movies_dict
 
 async def fetch_imdb_data(session, movie_title, imdb_url):
@@ -201,6 +213,34 @@ async def update_movies_with_letterboxd(movies, movies_dict):
 
     return movies
 
+async def _upsert_user_ratings(username: str, movies: list[dict]) -> None:
+    """
+    Store the user's ratings in Mongo (UserRatings collection).
+    Keeps only the minimal fields the recommender needs + useful metadata.
+    """
+    ratings = []
+    for m in movies:
+        if not m.get("title"):
+            continue
+        ratings.append({
+            "title": m.get("title"),
+            "imdb_id": m.get("imdb_id"),
+            "user_rating": m.get("user_rating"),
+            # keep a few handy read-only fields for the frontend:
+            "poster": m.get("poster"),
+            "year": m.get("year"),
+            "genres": m.get("genres", []),
+            "average": m.get("average"),
+            "votes": m.get("votes"),
+        })
+
+    now = datetime.now(timezone.utc).isoformat()
+    await user_ratings_collection.update_one(
+        {"lb_username": username},
+        {"$set": {"ratings": ratings, "updated_at": now, "source": "letterboxd"}},
+        upsert=True
+    )
+
 async def scrape_user(username):
     total_pages = await get_page_count(username)
     if total_pages == 0:
@@ -209,4 +249,7 @@ async def scrape_user(username):
     movies_dict = await fetch_letterboxd_pages(username, total_pages)
     movies = list(movies_dict.values())
     movies = await update_movies_with_letterboxd(movies, movies_dict)
+
+    await _upsert_user_ratings(username, movies)
+
     return movies

@@ -1,7 +1,7 @@
 import asyncio
 import aiohttp
 import csv
-from db import collection
+from core.db import collection
 
 API_URL = "https://api.imdbapi.dev/titles/{}"
 
