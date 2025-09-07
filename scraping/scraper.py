@@ -100,7 +100,6 @@ async def fetch_imdb_data(session, movie_title, imdb_url):
 
             average = 0
             votes = 0
-            rating_tag = soup.find("div", class_="ipxRZe")
             # print(rating_tag)
             poster = soup.find("div", class_="ipc-media")
             # print(imdb_url, poster)
@@ -129,6 +128,7 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
             "average": existing.get("average", 0),
             "votes": existing.get("votes", 0),
             "directors": existing.get("directors", []),
+            "plot": existing.get("plot",""),
             "writers": existing.get("writers", []),
             "stars": existing.get("stars", []),
             "originCountries": existing.get("originCountries", []),
@@ -167,6 +167,7 @@ async def fetch_letterboxd_data(session, movie_title, letterboxd_url):
                 "average": data.get("rating", {}).get("aggregateRating"),
                 "votes": data.get("rating", {}).get("voteCount"),
                 "directors": data.get("directors", []),
+                "plot": data.get("plot",""),
                 "writers": data.get("writers", []),
                 "stars": data.get("stars", []),
                 "originCountries": data.get("originCountries", []),

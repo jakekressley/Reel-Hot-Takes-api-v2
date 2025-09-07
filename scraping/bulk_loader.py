@@ -1,7 +1,7 @@
 import asyncio
 import aiohttp
 import csv
-from core.db import collection
+from db import collection
 
 API_URL = "https://api.imdbapi.dev/titles/{}"
 
@@ -9,10 +9,7 @@ errorCount = 0
 erroredMovies = set()
 
 async def fetch_imdb_movie(session, imdb_id):
-    existing = await collection.find_one({"imdb_id": imdb_id})
-    if existing:
-        print(f"[Skipping] {existing.get('title', 'No Title')} ({imdb_id}) already in DB")
-        return None
+
 
     async with session.get(API_URL.format(imdb_id)) as resp:
         if resp.status != 200:
@@ -53,6 +50,7 @@ async def preload_movies_from_csv(csv_file):
                     "genres": data.get("genres", []),
                     "average": data.get("rating", {}).get("aggregateRating"),
                     "votes": data.get("rating", {}).get("voteCount"),
+                    "plot": data.get("plot",""),
                     "directors": data.get("directors", []),
                     "writers": data.get("writers", []),
                     "stars": data.get("stars", []),
@@ -62,10 +60,10 @@ async def preload_movies_from_csv(csv_file):
                 }
                 await collection.update_one(
                     {"imdb_id": movie_doc["imdb_id"]},
-                    {"$set": movie_doc},
+                    {"$set": {"plot": movie_doc["plot"]}},
                     upsert=True
                 )
-                print(f"[Inserting] {movie_doc['title']} ({imdb_id})")
+                print(f"[Inserting plot] {movie_doc['title']} ({imdb_id})")
 
             # Sleep .3 second before the next request to avoid the 429
             await asyncio.sleep(0.3)
