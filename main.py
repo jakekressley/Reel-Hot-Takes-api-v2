@@ -19,6 +19,7 @@ origins = [
     "http://127.0.0.1:8000",
     "https://reelhottakes.xyz",
     "https://screenscout.xyz",
+    "https://www.screenscout.xyz"
 ]
 
 app.add_middleware(
