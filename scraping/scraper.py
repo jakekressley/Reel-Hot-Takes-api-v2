@@ -205,6 +205,7 @@ async def update_movies_with_letterboxd(movies, movies_dict):
             movie["average"] = lb_data.get("average", {})
             movie["votes"] = lb_data.get("votes", {})
             movie["directors"] = lb_data.get("directors", [])
+            movie["plot"] = lb_data.get("plot","")
             movie["writers"] = lb_data.get("writers", [])
             movie["stars"] = lb_data.get("stars", [])
             movie["originCountries"] = lb_data.get("originCountries", [])
@@ -227,9 +228,9 @@ async def _upsert_user_ratings(username: str, movies: list[dict]) -> None:
             "title": m.get("title"),
             "imdb_id": m.get("imdb_id"),
             "user_rating": m.get("user_rating"),
-            # keep a few handy read-only fields for the frontend:
             "poster": m.get("poster"),
             "year": m.get("year"),
+            "plot": m.get("plot",""),
             "genres": m.get("genres", []),
             "average": m.get("average"),
             "votes": m.get("votes"),
